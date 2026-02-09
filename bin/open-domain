@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DOMAIN="${1:-}"
+CONF="/etc/caddy/sites-enabled/$DOMAIN.conf"
+
+[ -z "$DOMAIN" ] && {
+  echo "Usage: open-domain <domain>"
+  exit 1
+}
+
+[ ! -f "$CONF" ] && {
+  echo "Config not found"
+  exit 1
+}
+
+sudo sed -i '/basicauth {/,/}/d' "$CONF"
+sudo systemctl reload caddy
+
+echo "Domain is now public"

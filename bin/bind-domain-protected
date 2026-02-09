@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DOMAIN="${1:-}"
+PORT="${2:-}"
+
+log() { echo "[bind-domain-protected] $1"; }
+
+[ -z "$DOMAIN" ] || [ -z "$PORT" ] && {
+  echo "Usage: bind-domain-protected <domain> <port>"
+  exit 1
+}
+
+SITE_DIR="/etc/caddy/sites-enabled"
+CONF="$SITE_DIR/$DOMAIN.conf"
+
+sudo mkdir -p "$SITE_DIR"
+
+if [ -f "$CONF" ]; then
+  log "Config exists for $DOMAIN"
+  exit 0
+fi
+
+read -rp "Username: " USERNAME
+echo
+echo "Enter password:"
+HASH=$(caddy hash-password)
+
+sudo tee "$CONF" >/dev/null <<EOF
+$DOMAIN {
+    basicauth {
+        $USERNAME $HASH
+    }
+
+    reverse_proxy 127.0.0.1:$PORT
+}
+EOF
+
+sudo systemctl reload caddy
+log "Protected route created"

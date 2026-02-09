@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DOMAIN="${1:-}"
+PORT="${2:-}"
+
+log() { echo "[bind-domain-public] $1"; }
+
+[ -z "$DOMAIN" ] || [ -z "$PORT" ] && {
+  echo "Usage: bind-domain-public <domain> <port>"
+  exit 1
+}
+
+SITE_DIR="/etc/caddy/sites-enabled"
+CONF="$SITE_DIR/$DOMAIN.conf"
+
+sudo mkdir -p "$SITE_DIR"
+
+if [ -f "$CONF" ]; then
+  log "Config exists for $DOMAIN"
+  exit 0
+fi
+
+sudo tee "$CONF" >/dev/null <<EOF
+$DOMAIN {
+    reverse_proxy 127.0.0.1:$PORT
+}
+EOF
+
+sudo systemctl reload caddy
+log "Public route created"

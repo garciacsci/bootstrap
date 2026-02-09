@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DOMAIN="${1:-}"
+CONF="/etc/caddy/sites-enabled/$DOMAIN.conf"
+
+[ -z "$DOMAIN" ] && {
+  echo "Usage: lock-domain <domain>"
+  exit 1
+}
+
+[ ! -f "$CONF" ] && {
+  echo "Config not found"
+  exit 1
+}
+
+read -rp "Username: " USERNAME
+echo
+echo "Enter password:"
+HASH=$(caddy hash-password)
+
+TMP=$(mktemp)
+
+sudo awk -v u="$USERNAME" -v h="$HASH" '
+/\{/ && !done {
+  print
+  print "    basicauth {"
+  print "        " u " " h
+  print "    }"
+  done=1
+  next
+}
+{ print }
+' "$CONF" | sudo tee "$TMP" >/dev/null
+
+sudo mv "$TMP" "$CONF"
+sudo systemctl reload caddy
+
+echo "Domain locked"
