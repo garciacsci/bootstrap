@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_VERSION="0.2.0"
+
 log() {
   echo "[bootstrap-dev] $1"
 }
+
+log "bootstrap-dev v$SCRIPT_VERSION start"
 
 OS="$(uname -s)"
 
@@ -31,7 +35,6 @@ if [[ "$OS" == "Linux" ]]; then
   if ! command -v docker >/dev/null 2>&1; then
     log "Installing Docker"
     curl -fsSL https://get.docker.com | sh
-    sudo usermod -aG docker "$USER"
     log "Docker installed (run: newgrp docker)"
   else
     log "Docker already installed"
@@ -57,9 +60,17 @@ fi
 # Docker buildx (multi-arch builder)
 ########################################
 
+if command -v systemctl >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
+  sudo systemctl enable docker || true
+  sudo systemctl start docker || true
+fi
+
 if command -v docker >/dev/null 2>&1; then
+  docker info >/dev/null 2>&1 || sleep 2
+
   if ! docker buildx version >/dev/null 2>&1; then
     log "Enabling buildx"
+    docker buildx inspect multiarch-builder >/dev/null 2>&1 || \
     docker buildx create --use --name multiarch-builder || true
   else
     log "buildx already available"
@@ -70,20 +81,21 @@ fi
 # Install NVM
 ########################################
 
-if [ ! -d "$HOME/.nvm" ]; then
+export NVM_DIR="$HOME/.nvm"
+
+if [ ! -d "$NVM_DIR" ]; then
   log "Installing NVM"
   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-else
-  log "NVM already installed"
 fi
 
-########################################
 # Load NVM
-########################################
-
-export NVM_DIR="$HOME/.nvm"
 # shellcheck disable=SC1090
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  . "$NVM_DIR/nvm.sh"
+else
+  log "NVM install finished. Re-run bootstrap-dev in a new shell."
+  exit 0
+fi
 
 ########################################
 # Node LTS
@@ -124,6 +136,10 @@ else
   log "PM2 already installed"
 fi
 
+pm2 startup || true
+pm2 save || true
+
+
 ########################################
 # Optional power tools
 ########################################
@@ -153,3 +169,7 @@ echo "Docker: $(docker --version 2>/dev/null || echo missing)"
 echo "Buildx: $(docker buildx version 2>/dev/null || echo missing)"
 
 log "bootstrap-dev complete"
+
+echo
+echo "If docker fails, run:"
+echo "  newgrp docker"
