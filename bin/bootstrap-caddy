@@ -8,7 +8,7 @@ log() {
 OS_ID="$(. /etc/os-release && echo "$ID")"
 
 ########################################
-# Ensure Debian/Ubuntu
+# OS Check
 ########################################
 
 if [[ "$OS_ID" != "ubuntu" && "$OS_ID" != "debian" ]]; then
@@ -17,7 +17,7 @@ if [[ "$OS_ID" != "ubuntu" && "$OS_ID" != "debian" ]]; then
 fi
 
 ########################################
-# Install prerequisites
+# Install Caddy (if missing)
 ########################################
 
 if ! command -v caddy >/dev/null 2>&1; then
@@ -46,15 +46,38 @@ else
 fi
 
 ########################################
-# Ensure config exists but do NOT overwrite
+# Ensure directory structure
 ########################################
 
-CADDYFILE="/etc/caddy/Caddyfile"
+SITE_DIR="/etc/caddy/sites-enabled"
+MAIN_CADDYFILE="/etc/caddy/Caddyfile"
 
-if [ ! -f "$CADDYFILE" ]; then
-  log "Creating empty Caddyfile"
-  sudo mkdir -p /etc/caddy
-  echo "" | sudo tee "$CADDYFILE" >/dev/null
+sudo mkdir -p "$SITE_DIR"
+
+########################################
+# Ensure main Caddyfile exists
+########################################
+
+if [ ! -f "$MAIN_CADDYFILE" ]; then
+  log "Creating main Caddyfile"
+
+  sudo tee "$MAIN_CADDYFILE" >/dev/null <<EOF
+{
+    email you@example.com
+}
+
+import sites-enabled/*
+EOF
+
+else
+  # Ensure import line exists
+  if ! sudo grep -q "import sites-enabled/\*" "$MAIN_CADDYFILE"; then
+    log "Adding sites-enabled import to existing Caddyfile"
+    echo "" | sudo tee -a "$MAIN_CADDYFILE" >/dev/null
+    echo "import sites-enabled/*" | sudo tee -a "$MAIN_CADDYFILE" >/dev/null
+  else
+    log "sites-enabled import already present"
+  fi
 fi
 
 ########################################
@@ -65,10 +88,8 @@ if command -v systemctl >/dev/null 2>&1; then
   log "Enabling Caddy service"
   sudo systemctl enable caddy
 
-  log "Starting Caddy"
+  log "Starting/restarting Caddy"
   sudo systemctl restart caddy
-else
-  log "systemctl not available — skipping service start"
 fi
 
 ########################################
@@ -77,7 +98,7 @@ fi
 
 if command -v systemctl >/dev/null 2>&1; then
   log "Caddy status:"
-  sudo systemctl --no-pager status caddy | head -n 10 || true
+  sudo systemctl --no-pager status caddy | head -n 8 || true
 fi
 
 log "bootstrap-caddy complete"
