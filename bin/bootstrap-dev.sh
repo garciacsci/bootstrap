@@ -89,10 +89,13 @@ if [ ! -d "$NVM_DIR" ]; then
 fi
 
 # Load NVM
+# nvm's shell code references unbound variables, so temporarily relax -u
 # shellcheck disable=SC1090
+set +u
 if [ -s "$NVM_DIR/nvm.sh" ]; then
   . "$NVM_DIR/nvm.sh"
 else
+  set -u
   log "NVM install finished. Re-run bootstrap-dev in a new shell."
   exit 0
 fi
@@ -108,6 +111,7 @@ fi
 
 nvm use --lts
 nvm alias default 'lts/*'
+set -u
 
 ########################################
 # Corepack + pnpm
