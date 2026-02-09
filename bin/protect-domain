@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DOMAIN="${1:-}"
+
+log() {
+  echo "[protect-domain] $1"
+}
+
+if [[ -z "$DOMAIN" ]]; then
+  echo "Usage: protect-domain <domain>"
+  exit 1
+fi
+
+CONF_FILE="/etc/caddy/sites-enabled/$DOMAIN.conf"
+
+if [ ! -f "$CONF_FILE" ]; then
+  log "Config not found for $DOMAIN"
+  exit 1
+fi
+
+echo
+read -rp "Username: " USERNAME
+echo
+echo "Enter password for $USERNAME"
+echo
+
+HASH=$(caddy hash-password)
+
+TMP_FILE=$(mktemp)
+
+########################################
+# Inject basicauth if not present
+########################################
+
+if grep -q "basicauth" "$CONF_FILE"; then
+  log "basicauth already exists — updating credentials"
+
+  sudo awk -v user="$USERNAME" -v hash="$HASH" '
+    /basicauth/ { print; getline; print "        " user " " hash; next }
+    { print }
+  ' "$CONF_FILE" | sudo tee "$TMP_FILE" >/dev/null
+
+else
+  log "Adding basicauth block"
+
+  sudo awk -v user="$USERNAME" -v hash="$HASH" '
+    /\{/ && !done {
+      print
+      print "    basicauth {"
+      print "        " user " " hash
+      print "    }"
+      done=1
+      next
+    }
+    { print }
+  ' "$CONF_FILE" | sudo tee "$TMP_FILE" >/dev/null
+fi
+
+sudo mv "$TMP_FILE" "$CONF_FILE"
+
+########################################
+# Reload Caddy
+########################################
+
+if command -v systemctl >/dev/null 2>&1; then
+  log "Reloading Caddy"
+  sudo systemctl reload caddy
+fi
+
+log "Protection enabled for $DOMAIN"
