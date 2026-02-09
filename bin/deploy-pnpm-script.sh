@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ $# -lt 2 ]; then
+  echo "Usage: deploy-pnpm-service <directory-name> <pnpm-script> [branch]"
+  exit 1
+fi
+
+RAW_NAME="$1"
+PNPM_SCRIPT="$2"
+BRANCH="${3:-}"
+
+NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' )
+BASE_DIR="$(pwd)/$NAME"
+
+if [ ! -d "$BASE_DIR" ]; then
+  echo "Directory not found: $BASE_DIR"
+  exit 1
+fi
+
+cd "$BASE_DIR"
+
+if [ -z "$BRANCH" ]; then
+  BRANCH=$(git rev-parse --abbrev-ref HEAD)
+fi
+
+SERVICE_DIR="$HOME/.pm2-deploy-services"
+mkdir -p "$SERVICE_DIR"
+
+cat > "$SERVICE_DIR/$NAME.env" <<EOF
+NAME=$NAME
+BASE_DIR=$BASE_DIR
+PNPM_SCRIPT=$PNPM_SCRIPT
+BRANCH=$BRANCH
+EOF
+
+echo "Saved service config: $SERVICE_DIR/$NAME.env"
+
+echo "Initial install..."
+pnpm install --frozen-lockfile || pnpm install
+
+PROCESS_NAME="$NAME"
+
+if pm2 describe "$PROCESS_NAME" >/dev/null 2>&1; then
+  pm2 restart "$PROCESS_NAME"
+else
+  pm2 start "pnpm run $PNPM_SCRIPT" --name "$PROCESS_NAME"
+fi
+
+pm2 save
+
+echo "Service registered and running."
+pm2 status
