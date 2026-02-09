@@ -9,7 +9,8 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$HISTORY_FILE"
 }
 
-log "bootstrap-machine start"
+SCRIPT_VERSION="0.2.0"
+log "bootstrap-machine v$SCRIPT_VERSION start"
 
 ########################################
 # Ensure ~/bin on PATH
@@ -62,6 +63,20 @@ if command -v apt-get >/dev/null 2>&1; then
 fi
 
 ########################################
+# Docker group setup (if docker present)
+########################################
+
+if command -v docker >/dev/null 2>&1; then
+  if groups "$USER" | grep -q '\bdocker\b'; then
+    log "User already in docker group"
+  else
+    log "Adding $USER to docker group"
+    sudo usermod -aG docker "$USER"
+    log "Run: newgrp docker  (or log out/in)"
+  fi
+fi
+
+########################################
 # Git defaults
 ########################################
 
@@ -73,5 +88,9 @@ fi
 
 log "bootstrap-machine complete"
 echo
+if command -v docker >/dev/null 2>&1; then
+  echo "Run: newgrp docker"
+  echo
+fi
 echo "Reload shell or run:"
 echo "source $SHELL_RC"
