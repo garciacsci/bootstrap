@@ -143,6 +143,18 @@ fi
 pm2 startup || true
 pm2 save || true
 
+########################################
+# pm2-auto-update cron (every 3 min)
+########################################
+
+CRON_CMD="$HOME/bin/pm2-auto-update"
+CRON_JOB="*/3 * * * * $CRON_CMD >> /tmp/pm2-auto-update.log 2>&1"
+if crontab -l 2>/dev/null | grep -Fq "$CRON_CMD"; then
+  log "pm2-auto-update cron already installed"
+else
+  ( crontab -l 2>/dev/null; echo "$CRON_JOB" ) | crontab -
+  log "Installed pm2-auto-update cron (every 5 min)"
+fi
 
 ########################################
 # Optional power tools
