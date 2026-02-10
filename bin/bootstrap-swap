@@ -51,4 +51,34 @@ sudo mkswap "$SWAP_FILE" || true
 ########################################
 
 log "Enabling swap"
-sudo swapon "$SW
+sudo swapon "$SWAP_FILE"
+
+########################################
+# Persist in fstab
+########################################
+
+if ! grep -q "$SWAP_FILE" /etc/fstab; then
+  log "Adding to /etc/fstab"
+  echo "$SWAP_FILE none swap sw 0 0" | sudo tee -a /etc/fstab
+fi
+
+########################################
+# Tune swappiness
+########################################
+
+if ! grep -q "vm.swappiness" /etc/sysctl.conf; then
+  log "Setting swappiness"
+  echo "vm.swappiness=10" | sudo tee -a /etc/sysctl.conf
+fi
+
+sudo sysctl vm.swappiness=10
+
+########################################
+# Verify
+########################################
+
+log "Swap status"
+free -h
+swapon --show
+
+log "bootstrap-swap complete"
