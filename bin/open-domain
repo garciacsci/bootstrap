@@ -14,7 +14,27 @@ CONF="/etc/caddy/sites-enabled/$DOMAIN.conf"
   exit 1
 }
 
-sudo sed -i '/basicauth {/,/}/d' "$CONF"
-sudo systemctl reload caddy
+if ! grep -q "basicauth" "$CONF"; then
+  echo "Domain is already public"
+  exit 0
+fi
 
-echo "Domain is now public"
+# Remove the entire basicauth block (handles indentation and multi-line)
+TMP=$(mktemp)
+sudo awk '
+  /basicauth[[:space:]]*\{/ { skip=1; next }
+  skip && /\}/              { skip=0; next }
+  skip                      { next }
+  # Remove blank lines left behind after block removal
+  { print }
+' "$CONF" | cat -s | sudo tee "$TMP" >/dev/null
+
+sudo mv "$TMP" "$CONF"
+
+if sudo caddy validate --config /etc/caddy/Caddyfile 2>/dev/null; then
+  sudo systemctl reload caddy
+  echo "Domain is now public"
+else
+  echo "Caddy config validation failed — check $CONF"
+  exit 1
+fi

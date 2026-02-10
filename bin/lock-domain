@@ -14,6 +14,11 @@ CONF="/etc/caddy/sites-enabled/$DOMAIN.conf"
   exit 1
 }
 
+if grep -q "basicauth" "$CONF"; then
+  echo "Domain already locked"
+  exit 0
+fi
+
 read -rp "Username: " USERNAME
 echo
 echo "Enter password:"
@@ -24,6 +29,7 @@ TMP=$(mktemp)
 sudo awk -v u="$USERNAME" -v h="$HASH" '
 /\{/ && !done {
   print
+  print ""
   print "    basicauth {"
   print "        " u " " h
   print "    }"
@@ -34,6 +40,11 @@ sudo awk -v u="$USERNAME" -v h="$HASH" '
 ' "$CONF" | sudo tee "$TMP" >/dev/null
 
 sudo mv "$TMP" "$CONF"
-sudo systemctl reload caddy
 
-echo "Domain locked"
+if sudo caddy validate --config /etc/caddy/Caddyfile 2>/dev/null; then
+  sudo systemctl reload caddy
+  echo "Domain locked"
+else
+  echo "Caddy config validation failed — check $CONF"
+  exit 1
+fi

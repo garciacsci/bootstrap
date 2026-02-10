@@ -30,42 +30,42 @@ HASH=$(caddy hash-password)
 TMP_FILE=$(mktemp)
 
 ########################################
-# Inject basicauth if not present
+# Remove existing basicauth block (if any), then inject fresh
 ########################################
 
-if grep -q "basicauth" "$CONF_FILE"; then
-  log "basicauth already exists — updating credentials"
+# Step 1: strip any existing basicauth block
+sudo awk '
+  /basicauth[[:space:]]*\{/ { skip=1; next }
+  skip && /\}/              { skip=0; next }
+  skip                      { next }
+  { print }
+' "$CONF_FILE" | cat -s | sudo tee "$TMP_FILE" >/dev/null
 
-  sudo awk -v user="$USERNAME" -v hash="$HASH" '
-    /basicauth/ { print; getline; print "        " user " " hash; next }
-    { print }
-  ' "$CONF_FILE" | sudo tee "$TMP_FILE" >/dev/null
+# Step 2: inject new basicauth block after the opening brace
+sudo awk -v user="$USERNAME" -v hash="$HASH" '
+  /\{/ && !done {
+    print
+    print ""
+    print "    basicauth {"
+    print "        " user " " hash
+    print "    }"
+    done=1
+    next
+  }
+  { print }
+' "$TMP_FILE" | sudo tee "$CONF_FILE" >/dev/null
 
-else
-  log "Adding basicauth block"
-
-  sudo awk -v user="$USERNAME" -v hash="$HASH" '
-    /\{/ && !done {
-      print
-      print "    basicauth {"
-      print "        " user " " hash
-      print "    }"
-      done=1
-      next
-    }
-    { print }
-  ' "$CONF_FILE" | sudo tee "$TMP_FILE" >/dev/null
-fi
-
-sudo mv "$TMP_FILE" "$CONF_FILE"
+rm -f "$TMP_FILE"
 
 ########################################
-# Reload Caddy
+# Validate and reload Caddy
 ########################################
 
-if command -v systemctl >/dev/null 2>&1; then
+if sudo caddy validate --config /etc/caddy/Caddyfile 2>/dev/null; then
   log "Reloading Caddy"
   sudo systemctl reload caddy
+  log "Protection enabled for $DOMAIN"
+else
+  log "Caddy config validation failed — check $CONF_FILE"
+  exit 1
 fi
-
-log "Protection enabled for $DOMAIN"
