@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_VERSION="0.2.0"
+SCRIPT_VERSION="0.3.0"
 
 log() {
   echo "[bootstrap-dev] $1"
 }
+
+WITH_DOCKER=false
+for arg in "$@"; do
+  case "$arg" in
+    --docker) WITH_DOCKER=true ;;
+  esac
+done
 
 log "bootstrap-dev v$SCRIPT_VERSION start"
 
@@ -28,53 +35,49 @@ if [[ "$OS" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
 fi
 
 ########################################
-# Docker
+# Docker (optional — pass --docker)
 ########################################
 
-if [[ "$OS" == "Linux" ]]; then
-  if ! command -v docker >/dev/null 2>&1; then
-    log "Installing Docker"
-    curl -fsSL https://get.docker.com | sh
-    log "Docker installed (run: newgrp docker)"
-  else
-    log "Docker already installed"
-  fi
-fi
-
-########################################
-# Docker Compose plugin
-########################################
-
-if command -v docker >/dev/null 2>&1; then
-  if ! docker compose version >/dev/null 2>&1; then
-    if command -v apt-get >/dev/null 2>&1; then
-      log "Installing Docker Compose plugin"
-      sudo apt-get install -y docker-compose-plugin || true
+if [[ "$WITH_DOCKER" == true ]]; then
+  if [[ "$OS" == "Linux" ]]; then
+    if ! command -v docker >/dev/null 2>&1; then
+      log "Installing Docker"
+      curl -fsSL https://get.docker.com | sh
+      log "Docker installed (run: newgrp docker)"
+    else
+      log "Docker already installed"
     fi
-  else
-    log "Docker Compose already available"
   fi
-fi
 
-########################################
-# Docker buildx (multi-arch builder)
-########################################
-
-if command -v systemctl >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
-  sudo systemctl enable docker || true
-  sudo systemctl start docker || true
-fi
-
-if command -v docker >/dev/null 2>&1; then
-  docker info >/dev/null 2>&1 || sleep 2
-
-  if ! docker buildx version >/dev/null 2>&1; then
-    log "Enabling buildx"
-    docker buildx inspect multiarch-builder >/dev/null 2>&1 || \
-    docker buildx create --use --name multiarch-builder || true
-  else
-    log "buildx already available"
+  if command -v docker >/dev/null 2>&1; then
+    if ! docker compose version >/dev/null 2>&1; then
+      if command -v apt-get >/dev/null 2>&1; then
+        log "Installing Docker Compose plugin"
+        sudo apt-get install -y docker-compose-plugin || true
+      fi
+    else
+      log "Docker Compose already available"
+    fi
   fi
+
+  if command -v systemctl >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
+    sudo systemctl enable docker || true
+    sudo systemctl start docker || true
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    docker info >/dev/null 2>&1 || sleep 2
+
+    if ! docker buildx version >/dev/null 2>&1; then
+      log "Enabling buildx"
+      docker buildx inspect multiarch-builder >/dev/null 2>&1 || \
+      docker buildx create --use --name multiarch-builder || true
+    else
+      log "buildx already available"
+    fi
+  fi
+else
+  log "Skipping Docker (pass --docker to install)"
 fi
 
 ########################################
@@ -181,11 +184,15 @@ echo "Versions:"
 echo "Node: $(node -v 2>/dev/null || echo missing)"
 echo "pnpm: $(pnpm -v 2>/dev/null || echo missing)"
 echo "PM2: $(pm2 -v 2>/dev/null || echo missing)"
-echo "Docker: $(docker --version 2>/dev/null || echo missing)"
-echo "Buildx: $(docker buildx version 2>/dev/null || echo missing)"
+if [[ "$WITH_DOCKER" == true ]]; then
+  echo "Docker: $(docker --version 2>/dev/null || echo missing)"
+  echo "Buildx: $(docker buildx version 2>/dev/null || echo missing)"
+fi
 
 log "bootstrap-dev complete"
 
-echo
-echo "If docker fails, run:"
-echo "  newgrp docker"
+if [[ "$WITH_DOCKER" == true ]]; then
+  echo
+  echo "If docker fails, run:"
+  echo "  newgrp docker"
+fi
