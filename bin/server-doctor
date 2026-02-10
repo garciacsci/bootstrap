@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RED='\033[0;31m'
+YEL='\033[0;33m'
+GRN='\033[0;32m'
+DIM='\033[2m'
+RST='\033[0m'
+
+ISSUES=0
+
+warn()  { echo -e "${YEL}⚠  $1${RST}"; ISSUES=$((ISSUES + 1)); }
+fail()  { echo -e "${RED}✖  $1${RST}"; ISSUES=$((ISSUES + 1)); }
+ok()    { echo -e "${GRN}✔  $1${RST}"; }
+info()  { echo -e "${DIM}   $1${RST}"; }
+
+echo
+echo "═══════════════════════════════════════"
+echo "  server-doctor"
+echo "═══════════════════════════════════════"
+echo
+
+########################################
+# 1. Memory overview
+########################################
+
+echo "── Memory ──"
+TOTAL_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+AVAIL_KB=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
+TOTAL_MB=$((TOTAL_KB / 1024))
+AVAIL_MB=$((AVAIL_KB / 1024))
+USED_MB=$((TOTAL_MB - AVAIL_MB))
+USAGE_PCT=$((USED_MB * 100 / TOTAL_MB))
+
+info "Total: ${TOTAL_MB} MB  Used: ${USED_MB} MB  Available: ${AVAIL_MB} MB  (${USAGE_PCT}%)"
+
+if [ "$USAGE_PCT" -gt 85 ]; then
+  fail "RAM usage is ${USAGE_PCT}% — critically high"
+elif [ "$USAGE_PCT" -gt 70 ]; then
+  warn "RAM usage is ${USAGE_PCT}% — elevated"
+else
+  ok "RAM usage is ${USAGE_PCT}% — healthy"
+fi
+
+########################################
+# 2. Swap check
+########################################
+
+echo
+echo "── Swap ──"
+SWAP_TOTAL=$(free -m | awk '/Swap/ {print $2}')
+SWAP_USED=$(free -m | awk '/Swap/ {print $3}')
+
+if [ "$SWAP_TOTAL" -eq 0 ]; then
+  warn "No swap configured — risky on small boxes"
+else
+  info "Swap: ${SWAP_USED} MB used / ${SWAP_TOTAL} MB total"
+  if [ "$SWAP_USED" -gt $((SWAP_TOTAL / 2)) ]; then
+    warn "Using >50% of swap — system is memory-pressured"
+  else
+    ok "Swap usage is normal"
+  fi
+fi
+
+########################################
+# 3. Duplicate node/pnpm processes
+########################################
+
+echo
+echo "── Node Processes ──"
+
+NODE_PROCS=$(pgrep -afc "node " 2>/dev/null || echo "0")
+PNPM_PROCS=$(pgrep -afc "pnpm run" 2>/dev/null || echo "0")
+
+# PM2 daemon counts as 1 node process, app counts as 1 more
+# Anything above 3 node procs is suspicious
+if [ "$NODE_PROCS" -gt 3 ]; then
+  fail "Found ${NODE_PROCS} node processes — likely duplicates"
+  info "Run:  pm2 ls  and check for orphans"
+  info "Run:  pkill -f 'pnpm run start'  to clean up"
+else
+  ok "Node process count looks normal (${NODE_PROCS})"
+fi
+
+if [ "$PNPM_PROCS" -gt 1 ]; then
+  warn "Found ${PNPM_PROCS} 'pnpm run' processes — should be ≤1 per app"
+else
+  ok "pnpm process count looks normal (${PNPM_PROCS})"
+fi
+
+########################################
+# 4. PM2 process check
+########################################
+
+echo
+echo "── PM2 Status ──"
+
+if ! command -v pm2 >/dev/null 2>&1; then
+  warn "PM2 not installed"
+else
+  PM2_ERRORED=$(pm2 jlist 2>/dev/null | grep -c '"status":"errored"' || echo "0")
+  PM2_STOPPED=$(pm2 jlist 2>/dev/null | grep -c '"status":"stopped"' || echo "0")
+  PM2_ONLINE=$(pm2 jlist 2>/dev/null | grep -c '"status":"online"' || echo "0")
+
+  info "Online: ${PM2_ONLINE}  Stopped: ${PM2_STOPPED}  Errored: ${PM2_ERRORED}"
+
+  if [ "$PM2_ERRORED" -gt 0 ]; then
+    fail "${PM2_ERRORED} PM2 process(es) in errored state"
+  fi
+  if [ "$PM2_STOPPED" -gt 0 ]; then
+    warn "${PM2_STOPPED} PM2 process(es) stopped"
+  fi
+  if [ "$PM2_ERRORED" -eq 0 ] && [ "$PM2_STOPPED" -eq 0 ]; then
+    ok "All PM2 processes are online"
+  fi
+fi
+
+########################################
+# 5. Node heap cap check
+########################################
+
+echo
+echo "── Heap Cap ──"
+
+if command -v pm2 >/dev/null 2>&1; then
+  UNCAPPED=$(pm2 jlist 2>/dev/null \
+    | python3 -c "
+import sys, json
+try:
+    procs = json.load(sys.stdin)
+    uncapped = [p['name'] for p in procs
+                if 'max-old-space-size' not in ' '.join(p.get('pm2_env', {}).get('node_args', []) if isinstance(p.get('pm2_env', {}).get('node_args', []), list) else [p.get('pm2_env', {}).get('node_args', '')])]
+    print('\n'.join(uncapped))
+except: pass
+" 2>/dev/null || true)
+
+  if [ -n "$UNCAPPED" ]; then
+    warn "Processes without --max-old-space-size:"
+    echo "$UNCAPPED" | while read -r name; do
+      info "  • $name"
+    done
+    info "Redeploy with:  NODE_HEAP_MB=128 deploy-pnpm-service <dir> <script>"
+  else
+    ok "All processes have a heap cap set"
+  fi
+fi
+
+########################################
+# 6. PM2 logrotate config
+########################################
+
+echo
+echo "── PM2 Logrotate ──"
+
+if pm2 describe pm2-logrotate >/dev/null 2>&1; then
+  LR_MAX=$(pm2 conf pm2-logrotate 2>/dev/null | grep max_size | head -1 | awk '{print $NF}' || echo "unknown")
+  LR_RETAIN=$(pm2 conf pm2-logrotate 2>/dev/null | grep retain | head -1 | awk '{print $NF}' || echo "unknown")
+  LR_COMPRESS=$(pm2 conf pm2-logrotate 2>/dev/null | grep compress | head -1 | awk '{print $NF}' || echo "unknown")
+
+  info "max_size=$LR_MAX  retain=$LR_RETAIN  compress=$LR_COMPRESS"
+
+  if [[ "$LR_COMPRESS" != "true" ]]; then
+    warn "Logrotate compression is off — wastes disk + memory"
+    info "Run:  tune-pm2-logrotate"
+  else
+    ok "Logrotate compression is enabled"
+  fi
+else
+  warn "pm2-logrotate is not installed"
+  info "Run:  pm2 install pm2-logrotate && tune-pm2-logrotate"
+fi
+
+########################################
+# 7. Caddy check
+########################################
+
+echo
+echo "── Caddy ──"
+
+if command -v caddy >/dev/null 2>&1; then
+  if systemctl is-active --quiet caddy 2>/dev/null; then
+    ok "Caddy is running"
+  else
+    warn "Caddy is installed but not running"
+  fi
+else
+  info "Caddy not installed (skip)"
+fi
+
+########################################
+# 8. Disk space
+########################################
+
+echo
+echo "── Disk ──"
+
+DISK_PCT=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
+info "Root filesystem: ${DISK_PCT}% used"
+
+if [ "$DISK_PCT" -gt 90 ]; then
+  fail "Disk usage ${DISK_PCT}% — critically full"
+elif [ "$DISK_PCT" -gt 75 ]; then
+  warn "Disk usage ${DISK_PCT}% — getting full"
+else
+  ok "Disk usage is healthy"
+fi
+
+########################################
+# Summary
+########################################
+
+echo
+echo "═══════════════════════════════════════"
+if [ "$ISSUES" -eq 0 ]; then
+  echo -e "${GRN}  All clear — no issues found${RST}"
+else
+  echo -e "${YEL}  Found ${ISSUES} issue(s) — review above${RST}"
+fi
+echo "═══════════════════════════════════════"
+echo

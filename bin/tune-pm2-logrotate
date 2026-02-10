@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() {
+  echo "[tune-pm2-logrotate] $1"
+}
+
+########################################
+# Ensure pm2-logrotate is installed
+########################################
+
+if ! pm2 describe pm2-logrotate >/dev/null 2>&1; then
+  log "pm2-logrotate not installed — installing"
+  pm2 install pm2-logrotate
+fi
+
+########################################
+# Apply recommended settings
+########################################
+
+MAX_SIZE="${1:-5M}"
+RETAIN="${2:-3}"
+
+log "Setting max_size=$MAX_SIZE retain=$RETAIN compress=true"
+
+pm2 set pm2-logrotate:max_size "$MAX_SIZE"
+pm2 set pm2-logrotate:retain "$RETAIN"
+pm2 set pm2-logrotate:compress true
+pm2 set pm2-logrotate:workerInterval 30
+pm2 set pm2-logrotate:rotateInterval "0 0 * * *"
+
+log "Done. Current pm2-logrotate config:"
+pm2 conf pm2-logrotate 2>/dev/null || true

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SERVICE_DIR="$HOME/.pm2-deploy-services"
+NODE_HEAP_MB="${NODE_HEAP_MB:-128}"
 
 for file in "$SERVICE_DIR"/*.env; do
   [ -e "$file" ] || continue
@@ -29,7 +30,10 @@ for file in "$SERVICE_DIR"/*.env; do
       pm2 restart "$NAME"
     else
       echo "Process $NAME not found in PM2, starting fresh"
-      pm2 start "pnpm run $PNPM_SCRIPT" --name "$NAME" --cwd "$BASE_DIR"
+      pm2 start "pnpm run $PNPM_SCRIPT" \
+        --name "$NAME" \
+        --cwd "$BASE_DIR" \
+        --node-args="--max-old-space-size=$NODE_HEAP_MB"
     fi
     pm2 save
   else

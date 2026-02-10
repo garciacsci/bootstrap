@@ -40,12 +40,19 @@ echo "Initial install..."
 pnpm install --frozen-lockfile || pnpm install
 
 PROCESS_NAME="$NAME"
+NODE_HEAP_MB="${NODE_HEAP_MB:-128}"
+
+# Kill any ghost node/pnpm processes for this app
+pkill -f "pnpm run $PNPM_SCRIPT" 2>/dev/null || true
+sleep 1
 
 if pm2 describe "$PROCESS_NAME" >/dev/null 2>&1; then
-  pm2 restart "$PROCESS_NAME"
-else
-  pm2 start "pnpm run $PNPM_SCRIPT" --name "$PROCESS_NAME"
+  pm2 delete "$PROCESS_NAME"
 fi
+
+pm2 start "pnpm run $PNPM_SCRIPT" \
+  --name "$PROCESS_NAME" \
+  --node-args="--max-old-space-size=$NODE_HEAP_MB"
 
 pm2 save
 
