@@ -69,17 +69,28 @@ fi
 echo
 echo "── Node Processes ──"
 
-NODE_PROCS=$(pgrep -afc "node " 2>/dev/null || echo "0")
-PNPM_PROCS=$(pgrep -afc "pnpm run" 2>/dev/null || echo "0")
+NODE_PROCS=$(pgrep -fc "node" 2>/dev/null || echo "0")
+PNPM_PROCS=$(pgrep -fc "pnpm run" 2>/dev/null || echo "0")
 
-# PM2 daemon counts as 1 node process, app counts as 1 more
-# Anything above 3 node procs is suspicious
-if [ "$NODE_PROCS" -gt 3 ]; then
-  fail "Found ${NODE_PROCS} node processes — likely duplicates"
+# Expected node procs: PM2 daemon (1) + one per PM2-managed process
+# Count PM2 processes to set a dynamic baseline
+PM2_COUNT=0
+if command -v pm2 >/dev/null 2>&1; then
+  PM2_COUNT=$(pm2 jlist 2>/dev/null | python3 -c "
+import sys, json
+try:
+    print(len(json.load(sys.stdin)))
+except: print(0)
+" 2>/dev/null || echo "0")
+fi
+EXPECTED=$((PM2_COUNT + 2))  # +1 PM2 daemon, +1 margin
+
+if [ "$NODE_PROCS" -gt "$EXPECTED" ]; then
+  fail "Found ${NODE_PROCS} node processes (expected ≤${EXPECTED}) — likely duplicates"
   info "Run:  pm2 ls  and check for orphans"
   info "Run:  pkill -f 'pnpm run start'  to clean up"
 else
-  ok "Node process count looks normal (${NODE_PROCS})"
+  ok "Node process count looks normal (${NODE_PROCS} ≤ ${EXPECTED})"
 fi
 
 if [ "$PNPM_PROCS" -gt 1 ]; then
@@ -98,9 +109,15 @@ echo "── PM2 Status ──"
 if ! command -v pm2 >/dev/null 2>&1; then
   warn "PM2 not installed"
 else
-  PM2_ERRORED=$(pm2 jlist 2>/dev/null | grep -c '"status":"errored"' || echo "0")
-  PM2_STOPPED=$(pm2 jlist 2>/dev/null | grep -c '"status":"stopped"' || echo "0")
-  PM2_ONLINE=$(pm2 jlist 2>/dev/null | grep -c '"status":"online"' || echo "0")
+  PM2_JSON=$(pm2 jlist 2>/dev/null || echo "[]")
+  read -r PM2_ONLINE PM2_STOPPED PM2_ERRORED < <(echo "$PM2_JSON" | python3 -c "
+import sys, json
+try:
+    procs = json.load(sys.stdin)
+    s = lambda st: sum(1 for p in procs if p.get('pm2_env',{}).get('status') == st)
+    print(s('online'), s('stopped'), s('errored'))
+except: print('0 0 0')
+" 2>/dev/null || echo "0 0 0")
 
   info "Online: ${PM2_ONLINE}  Stopped: ${PM2_STOPPED}  Errored: ${PM2_ERRORED}"
 
@@ -128,8 +145,16 @@ if command -v pm2 >/dev/null 2>&1; then
 import sys, json
 try:
     procs = json.load(sys.stdin)
-    uncapped = [p['name'] for p in procs
-                if 'max-old-space-size' not in ' '.join(p.get('pm2_env', {}).get('node_args', []) if isinstance(p.get('pm2_env', {}).get('node_args', []), list) else [p.get('pm2_env', {}).get('node_args', '')])]
+    uncapped = []
+    for p in procs:
+        env = p.get('pm2_env', {})
+        # Skip PM2 modules (e.g. pm2-logrotate)
+        if env.get('pmx_module', False) or 'pm2-' in p.get('name', ''):
+            continue
+        args = env.get('node_args', [])
+        if isinstance(args, str): args = [args]
+        if 'max-old-space-size' not in ' '.join(args):
+            uncapped.append(p['name'])
     print('\n'.join(uncapped))
 except: pass
 " 2>/dev/null || true)
