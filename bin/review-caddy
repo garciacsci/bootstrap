@@ -49,9 +49,11 @@ echo
 echo "── Sites ──"
 
 if [ -d "$SITE_DIR" ]; then
-  CONFS=("$SITE_DIR"/*.conf 2>/dev/null) || true
+  shopt -s nullglob 2>/dev/null || true
+  CONFS=("$SITE_DIR"/*.conf)
+  shopt -u nullglob 2>/dev/null || true
 
-  if [ ! -e "${CONFS[0]}" ]; then
+  if [ ${#CONFS[@]} -eq 0 ]; then
     echo -e "${YEL}   No site configs in $SITE_DIR${RST}"
   else
     for conf in "${CONFS[@]}"; do
@@ -59,7 +61,8 @@ if [ -d "$SITE_DIR" ]; then
       HAS_AUTH="public"
       grep -q "basicauth" "$conf" && HAS_AUTH="locked"
 
-      PORT=$(grep -oP 'reverse_proxy\s+127\.0\.0\.1:\K[0-9]+' "$conf" 2>/dev/null || echo "?")
+      PORT=$(grep 'reverse_proxy' "$conf" 2>/dev/null | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' | head -1)
+      PORT="${PORT:-?}"
 
       if [ "$HAS_AUTH" = "locked" ]; then
         echo -e "   ${CYN}$DOMAIN${RST}  →  :${PORT}  ${YEL}🔒 basicauth${RST}"
