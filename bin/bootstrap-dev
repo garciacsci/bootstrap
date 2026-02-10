@@ -160,22 +160,6 @@ else
 fi
 
 ########################################
-# Optional power tools
-########################################
-
-if [[ "$OS" == "Linux" ]] && command -v apt-get >/dev/null 2>&1; then
-  if ! command -v gh >/dev/null 2>&1; then
-    log "Installing GitHub CLI"
-    sudo apt-get install -y gh || true
-  fi
-
-  if ! command -v lazygit >/dev/null 2>&1; then
-    log "Installing lazygit (if available)"
-    sudo apt-get install -y lazygit || true
-  fi
-fi
-
-########################################
 # Verification
 ########################################
 
