@@ -25,7 +25,12 @@ for file in "$SERVICE_DIR"/*.env; do
 
     pnpm install --frozen-lockfile || pnpm install
 
-    pm2 restart "$NAME"
+    if pm2 describe "$NAME" >/dev/null 2>&1; then
+      pm2 restart "$NAME"
+    else
+      echo "Process $NAME not found in PM2, starting fresh"
+      pm2 start "pnpm run $PNPM_SCRIPT" --name "$NAME" --cwd "$BASE_DIR"
+    fi
     pm2 save
   else
     echo "No updates for $NAME"
