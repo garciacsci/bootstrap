@@ -27,10 +27,6 @@ echo "Enter password:"
 HASH=$(caddy hash-password)
 
 sudo tee "$CONF" >/dev/null <<EOF
-http://$DOMAIN {
-    redir https://$DOMAIN{uri}
-}
-
 $DOMAIN {
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
