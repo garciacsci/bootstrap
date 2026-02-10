@@ -39,9 +39,7 @@ $DOMAIN {
         -Server
     }
 
-    @not_acme not path /.well-known/acme-challenge/*
-
-    basicauth @not_acme {
+    basicauth {
         $USERNAME $HASH
     }
 
