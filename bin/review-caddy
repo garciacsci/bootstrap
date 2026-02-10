@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DIM='\033[2m'
+GRN='\033[0;32m'
+YEL='\033[0;33m'
+RED='\033[0;31m'
+CYN='\033[0;36m'
+RST='\033[0m'
+
+MAIN="/etc/caddy/Caddyfile"
+SITE_DIR="/etc/caddy/sites-enabled"
+
+echo
+echo "═══════════════════════════════════════"
+echo "  review-caddy"
+echo "═══════════════════════════════════════"
+
+########################################
+# 1. Caddy service status
+########################################
+
+echo
+echo "── Service ──"
+if systemctl is-active --quiet caddy 2>/dev/null; then
+  echo -e "${GRN}✔  Caddy is running${RST}"
+else
+  echo -e "${RED}✖  Caddy is not running${RST}"
+fi
+
+########################################
+# 2. Main Caddyfile
+########################################
+
+echo
+echo "── Main Caddyfile ──"
+echo -e "${DIM}   $MAIN${RST}"
+if [ -f "$MAIN" ]; then
+  sed 's/^/   /' "$MAIN"
+else
+  echo -e "${RED}   Not found${RST}"
+fi
+
+########################################
+# 3. Site configs
+########################################
+
+echo
+echo "── Sites ──"
+
+if [ -d "$SITE_DIR" ]; then
+  CONFS=("$SITE_DIR"/*.conf 2>/dev/null) || true
+
+  if [ ! -e "${CONFS[0]}" ]; then
+    echo -e "${YEL}   No site configs in $SITE_DIR${RST}"
+  else
+    for conf in "${CONFS[@]}"; do
+      DOMAIN=$(basename "$conf" .conf)
+      HAS_AUTH="public"
+      grep -q "basicauth" "$conf" && HAS_AUTH="locked"
+
+      PORT=$(grep -oP 'reverse_proxy\s+127\.0\.0\.1:\K[0-9]+' "$conf" 2>/dev/null || echo "?")
+
+      if [ "$HAS_AUTH" = "locked" ]; then
+        echo -e "   ${CYN}$DOMAIN${RST}  →  :${PORT}  ${YEL}🔒 basicauth${RST}"
+      else
+        echo -e "   ${CYN}$DOMAIN${RST}  →  :${PORT}  ${GRN}🌐 public${RST}"
+      fi
+    done
+  fi
+else
+  echo -e "${YEL}   $SITE_DIR does not exist${RST}"
+fi
+
+########################################
+# 4. Duplicate domain check
+########################################
+
+echo
+echo "── Duplicates ──"
+
+DUPES=$(grep -rhoP '^\S+\.\S+\s*\{' /etc/caddy/ 2>/dev/null \
+  | sed 's/[[:space:]]*{//' \
+  | sort | uniq -d)
+
+if [ -n "$DUPES" ]; then
+  echo -e "${RED}✖  Duplicate site blocks found:${RST}"
+  echo "$DUPES" | while read -r d; do
+    echo -e "   ${RED}• $d${RST}"
+    grep -rl "$d" /etc/caddy/ 2>/dev/null | sed 's/^/     /'
+  done
+else
+  echo -e "${GRN}✔  No duplicate site blocks${RST}"
+fi
+
+########################################
+# 5. Config validation
+########################################
+
+echo
+echo "── Validation ──"
+
+if sudo caddy validate --config "$MAIN" 2>&1 | tail -1 | grep -q "Valid"; then
+  echo -e "${GRN}✔  Caddyfile is valid${RST}"
+else
+  echo -e "${RED}✖  Caddyfile has errors:${RST}"
+  sudo caddy validate --config "$MAIN" 2>&1 | sed 's/^/   /'
+fi
+
+########################################
+# 6. Show full site configs (verbose)
+########################################
+
+if [[ "${1:-}" == "-v" ]] && [ -d "$SITE_DIR" ]; then
+  echo
+  echo "── Full Configs ──"
+  for conf in "$SITE_DIR"/*.conf; do
+    [ -e "$conf" ] || continue
+    echo
+    echo -e "${DIM}── $(basename "$conf") ──${RST}"
+    sed 's/^/   /' "$conf"
+  done
+fi
+
+echo
+echo "═══════════════════════════════════════"
+echo
