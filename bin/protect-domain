@@ -47,6 +47,7 @@ sudo awk -v user="$USERNAME" -v hash="$HASH" '
     print
     print ""
     print "    basicauth {"
+    print "        realm \"Protected Area\""
     print "        " user " " hash
     print "    }"
     done=1

@@ -36,6 +36,7 @@ $DOMAIN {
     }
 
     basicauth {
+        realm "Protected Area"
         $USERNAME $HASH
     }
 
