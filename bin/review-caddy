@@ -59,7 +59,7 @@ if [ -d "$SITE_DIR" ]; then
     for conf in "${CONFS[@]}"; do
       DOMAIN=$(basename "$conf" .conf)
       HAS_AUTH="public"
-      grep -q "basicauth" "$conf" && HAS_AUTH="locked"
+      grep -qE "basicauth|basic_auth" "$conf" && HAS_AUTH="locked"
 
       PORT=$(grep 'reverse_proxy' "$conf" 2>/dev/null | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' | head -1)
       PORT="${PORT:-?}"
