@@ -6,10 +6,20 @@ PORT="${2:-}"
 
 log() { echo "[bind-domain-protected] $1"; }
 
+is_valid_fqdn() {
+  local value="$1"
+  [[ "$value" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$ ]]
+}
+
 [ -z "$DOMAIN" ] || [ -z "$PORT" ] && {
   echo "Usage: bind-domain-protected <domain> <port>"
   exit 1
 }
+
+if ! is_valid_fqdn "$DOMAIN"; then
+  echo "Error: domain must be a fully-qualified domain name (example: app.example.com)"
+  exit 1
+fi
 
 SITE_DIR="/etc/caddy/sites-enabled"
 CONF="$SITE_DIR/$DOMAIN.conf"
@@ -23,7 +33,6 @@ fi
 
 read -rp "Username: " USERNAME
 echo
-echo "Enter password:"
 HASH=$(caddy hash-password)
 
 sudo tee "$CONF" >/dev/null <<EOF
@@ -35,8 +44,7 @@ $DOMAIN {
         -Server
     }
 
-    basicauth {
-        realm "Protected Area"
+    basic_auth {
         $USERNAME $HASH
     }
 
