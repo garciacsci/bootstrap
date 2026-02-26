@@ -9,13 +9,20 @@ log() { echo "[bootstrap-caddy-security] $1"; }
 
 BASE_DOMAIN="${1:-}"
 AUTH_SUBDOMAIN="${2:-auth}"
+ADMIN_EMAIL="${3:-}"
 
 if [[ -z "$BASE_DOMAIN" ]]; then
-  echo "Usage: bootstrap-caddy-security <base-domain> [auth-subdomain]"
+  echo "Usage: bootstrap-caddy-security <base-domain> [auth-subdomain] [admin-email]"
   echo "  Example: bootstrap-caddy-security example.com"
-  echo "           bootstrap-caddy-security example.com auth"
+  echo "           bootstrap-caddy-security example.com auth admin@example.com"
   exit 1
 fi
+
+if [[ -z "$ADMIN_EMAIL" ]]; then
+  read -rp "Admin email for Let's Encrypt: " ADMIN_EMAIL
+fi
+
+[[ -n "$ADMIN_EMAIL" ]] || { log "Admin email is required"; exit 1; }
 
 AUTH_DOMAIN="${AUTH_SUBDOMAIN}.${BASE_DOMAIN}"
 
@@ -131,8 +138,8 @@ if [ ! -f "$USERS_FILE" ]; then
   sudo tee "$USERS_FILE" >/dev/null <<'EOF'
 {}
 EOF
-  sudo chown root:caddy "$USERS_FILE"
-  sudo chmod 640 "$USERS_FILE"
+  sudo chown caddy:caddy "$USERS_FILE"
+  sudo chmod 600 "$USERS_FILE"
 fi
 
 ########################################
@@ -143,7 +150,7 @@ log "Writing main Caddyfile with caddy-security global config"
 
 sudo tee "$MAIN_CADDYFILE" >/dev/null <<EOF
 {
-    email you@example.com
+    email $ADMIN_EMAIL
 
     order authenticate before respond
     order authorize before basicauth

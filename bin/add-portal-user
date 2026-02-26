@@ -98,8 +98,8 @@ with open(out_file, "w") as f:
 PYEOF
 
 sudo cp "$TMPFILE" "$USERS_FILE"
-sudo chown root:caddy "$USERS_FILE"
-sudo chmod 640 "$USERS_FILE"
+sudo chown caddy:caddy "$USERS_FILE"
+sudo chmod 600 "$USERS_FILE"
 rm -f "$TMPFILE"
 
 ########################################
