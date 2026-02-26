@@ -135,13 +135,13 @@ log "Systemd override created"
 
 sudo mkdir -p /var/lib/caddy
 
+# Don't pre-create users.json — let caddy-security initialize it
+# with the proper v1.1.x schema on first start
 if [ ! -f "$USERS_FILE" ]; then
-  log "Creating users store at $USERS_FILE"
-  sudo tee "$USERS_FILE" >/dev/null <<'EOF'
-{}
-EOF
-  sudo chown caddy:caddy "$USERS_FILE"
-  sudo chmod 600 "$USERS_FILE"
+  log "Users store will be initialized by caddy-security on first start"
+  # Set proper permissions on the directory
+  sudo chown -R caddy:caddy /var/lib/caddy
+  sudo chmod 755 /var/lib/caddy
 fi
 
 ########################################
@@ -222,18 +222,64 @@ else
 fi
 
 ########################################
-# Validate + restart
+# Validate Caddyfile
 ########################################
 
-if sudo caddy validate --config "$MAIN_CADDYFILE" 2>/dev/null; then
-  log "Caddyfile valid"
-  sudo systemctl restart caddy
-  log "Caddy restarted"
-else
+if ! sudo caddy validate --config "$MAIN_CADDYFILE" 2>/dev/null; then
   log "Caddyfile validation failed:"
   sudo caddy validate --config "$MAIN_CADDYFILE" 2>&1 | sed 's/^/  /'
   exit 1
 fi
+
+log "Caddyfile valid"
+
+########################################
+# Create first admin user
+########################################
+
+log "Creating initial admin user"
+echo
+read -rp "Admin username: " ADMIN_USERNAME
+read -rp "Admin email:    " ADMIN_EMAIL_INPUT
+
+echo
+read -rsp "Admin password: " ADMIN_PASSWORD
+echo
+read -rsp "Confirm:        " ADMIN_PASSWORD2
+echo
+
+if [[ "$ADMIN_PASSWORD" != "$ADMIN_PASSWORD2" ]]; then
+  log "Passwords do not match"
+  exit 1
+fi
+
+if [[ -z "$ADMIN_USERNAME" || -z "$ADMIN_EMAIL_INPUT" || -z "$ADMIN_PASSWORD" ]]; then
+  log "All fields are required"
+  exit 1
+fi
+
+# Stop Caddy to add first user (prevents DB conflicts)
+sudo systemctl stop caddy 2>/dev/null || true
+
+# Create password file for caddy-security
+TEMP_PASS=$(mktemp)
+echo "$ADMIN_PASSWORD" > "$TEMP_PASS"
+
+log "Adding admin user '$ADMIN_USERNAME'"
+
+# Add first admin user via CLI
+sudo caddy-security add user \
+  --db "$USERS_FILE" \
+  --username "$ADMIN_USERNAME" \
+  --email "$ADMIN_EMAIL_INPUT" \
+  --password "file:$TEMP_PASS" \
+  --roles "authp/admin,authp/user"
+
+rm -f "$TEMP_PASS"
+
+# Start Caddy with the user database already populated
+sudo systemctl start caddy
+log "Caddy started with initial admin user"
 
 ########################################
 # Done
@@ -245,12 +291,13 @@ echo "  caddy-security setup complete"
 echo "════════════════════════════════════════════"
 echo
 echo "  Auth portal:  https://$AUTH_DOMAIN/"
+echo "  Admin user:   $ADMIN_USERNAME"
 echo "  Users file:   $USERS_FILE"
 echo "  JWT key:      $SECURITY_ENV"
 echo
 echo "  Next steps:"
 echo
-echo "  1. Create your admin user:"
+echo "  1. To add more users:"
 echo "     add-portal-user"
 echo
 echo "  2. To protect a site:"

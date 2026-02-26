@@ -23,11 +23,13 @@ source ~/.bashrc   # or ~/.zshrc
 /etc/caddy/
   Caddyfile                  # global config — imports sites-enabled/*
   caddy-security.env         # JWT signing key (root:caddy 640, read by systemd)
-  users.json                 # caddy-security identity store (caddy:caddy 600)
   sites-enabled/
     auth.trilbysir.com.conf  # login portal site
     app.trilbysir.com.conf   # example protected site
     pub.trilbysir.com.conf   # example public site
+
+/var/lib/caddy/
+  users.json                 # caddy-security identity store (caddy:caddy 600, auto-initialized)
 
 /etc/systemd/system/caddy.service.d/
   caddy-security.conf        # drop-in that passes CADDY_JWT_KEY env var to caddy
@@ -72,9 +74,9 @@ source ~/.bashrc   # or ~/.zshrc
 
 ### Auth portal user management
 
-| Script            | Purpose                                                                                                                                                                    |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `add-portal-user` | Interactive: creates a user in `/etc/caddy/users.json` with bcrypt-hashed password. Prompts for username, email, password, and whether to grant admin role. Reloads Caddy. |
+| Script            | Purpose                                                                                                                                       |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add-portal-user` | Interactive: creates a user via `caddy-security` CLI. Prompts for username, email, password, and whether to grant admin role. Restarts Caddy. |
 
 ### Deploy keys
 
@@ -130,9 +132,9 @@ browser → app.trilbysir.com
 
 - `/etc/caddy/Caddyfile` — defines `security {}` block with identity store, portal, and policy. Rewritten by `bootstrap-caddy-security`.
 - `/etc/caddy/caddy-security.env` — contains `CADDY_JWT_KEY=<hex>`. Permissions: `root:caddy 640`. Read by systemd before caddy starts.
-- `/etc/caddy/users.json` — live user database managed by caddy-security. Permissions: `caddy:caddy 600`. Must be writable by the caddy process.
+- `/var/lib/caddy/users.json` — live user database managed by caddy-security. Permissions: `caddy:caddy 600`. Must be writable by the caddy process. **Never edit manually** — use `caddy-security` CLI via `add-portal-user`.
 
-**Registration is disabled.** `/register*` routes return 403 at the Caddy level. New users are added exclusively via `add-portal-user` (runs as root on the server).
+**Registration is disabled.** `/register*` routes return 403 at the Caddy level. New users are added exclusively via `add-portal-user` (which uses the `caddy-security` CLI).
 
 ---
 
@@ -171,8 +173,8 @@ review-caddy
 caddy-security writes to this file as a live database.
 
 ```bash
-sudo chown caddy:caddy /etc/caddy/users.json
-sudo chmod 600 /etc/caddy/users.json
+sudo chown caddy:caddy /var/lib/caddy/users.json
+sudo chmod 600 /var/lib/caddy/users.json
 sudo systemctl restart caddy
 ```
 

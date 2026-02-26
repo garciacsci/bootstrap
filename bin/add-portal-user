@@ -12,8 +12,7 @@ fail() { echo "[add-portal-user] Error: $1" >&2; exit 1; }
 
 [ -f "$USERS_FILE" ] || fail "Users file not found: $USERS_FILE — run bootstrap-caddy-security first"
 
-command -v caddy    >/dev/null 2>&1 || fail "caddy not found"
-command -v python3  >/dev/null 2>&1 || fail "python3 not found"
+command -v caddy >/dev/null 2>&1 || fail "caddy not found"
 
 ########################################
 # Gather inputs
@@ -36,78 +35,43 @@ echo
 
 echo
 read -rp "Grant admin role? [y/N] " ADMIN_CHOICE
-ROLE="authp/user"
-[[ "$ADMIN_CHOICE" =~ ^[Yy]$ ]] && ROLE="authp/admin"
+ROLES="authp/user"
+[[ "$ADMIN_CHOICE" =~ ^[Yy]$ ]] && ROLES="authp/admin,authp/user"
 
 ########################################
-# Hash password
+# Stop Caddy (prevents DB conflicts)
 ########################################
 
-HASH=$(caddy hash-password --plaintext "$PASSWORD")
-USER_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null \
-  || python3 -c "import uuid; print(uuid.uuid4())")
-NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+log "Stopping Caddy"
+sudo systemctl stop caddy
 
 ########################################
-# Write user to JSON store
+# Add user via caddy-security CLI
 ########################################
 
-TMPFILE=$(mktemp)
+log "Adding user '$USERNAME'"
 
-python3 - "$USERS_FILE" "$TMPFILE" \
-  "$USERNAME" "$EMAIL" "$HASH" "$ROLE" "$USER_ID" "$NOW" <<'PYEOF'
-import json, sys
+# Create password file for caddy-security
+TEMP_PASS=$(mktemp)
+echo "$PASSWORD" > "$TEMP_PASS"
 
-_, users_file, out_file, username, email, hash_val, role, user_id, now = sys.argv
+# Use caddy-security's user add command
+sudo caddy-security add user \
+  --db "$USERS_FILE" \
+  --username "$USERNAME" \
+  --email "$EMAIL" \
+  --password "file:$TEMP_PASS" \
+  --roles "$ROLES" \
+  || fail "Failed to add user — check caddy-security CLI is available"
 
-try:
-    with open(users_file) as f:
-        data = json.load(f)
-except (json.JSONDecodeError, FileNotFoundError):
-    data = {}
-
-if username in data:
-    print(f"Error: user '{username}' already exists", file=sys.stderr)
-    sys.exit(1)
-
-roles = [{"name": "authp/user"}]
-if role == "authp/admin":
-    roles.append({"name": "authp/admin"})
-
-data[username] = {
-    "id": user_id,
-    "username": username,
-    "email": email,
-    "email_verified": True,
-    "passwords": [
-        {
-            "purpose": "generic",
-            "type": "local",
-            "hash_type": "bcrypt",
-            "hash": hash_val,
-            "expired_at": "0001-01-01T00:00:00Z",
-            "created_at": now,
-            "disabled": False
-        }
-    ],
-    "roles": roles
-}
-
-with open(out_file, "w") as f:
-    json.dump(data, f, indent=2)
-PYEOF
-
-sudo cp "$TMPFILE" "$USERS_FILE"
-sudo chown caddy:caddy "$USERS_FILE"
-sudo chmod 600 "$USERS_FILE"
-rm -f "$TMPFILE"
+rm -f "$TEMP_PASS"
 
 ########################################
-# Reload Caddy
+# Restart Caddy
 ########################################
 
-log "Reloading Caddy"
-sudo systemctl reload caddy
+log "Starting Caddy"
+sudo systemctl start caddy
 
 echo
-log "User '$USERNAME' created with role '$ROLE'"
+log "User '$USERNAME' created with roles '$ROLES'"
