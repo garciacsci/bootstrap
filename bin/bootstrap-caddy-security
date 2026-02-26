@@ -29,7 +29,7 @@ AUTH_DOMAIN="${AUTH_SUBDOMAIN}.${BASE_DOMAIN}"
 MAIN_CADDYFILE="/etc/caddy/Caddyfile"
 SITE_DIR="/etc/caddy/sites-enabled"
 SECURITY_ENV="/etc/caddy/caddy-security.env"
-USERS_FILE="/var/libcaddy/users.json"
+USERS_FILE="/var/lib/caddy/users.json"
 SYSTEMD_OVERRIDE_DIR="/etc/systemd/system/caddy.service.d"
 
 ########################################
