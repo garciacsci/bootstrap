@@ -101,7 +101,8 @@ if [ ! -f "$SECURITY_ENV" ]; then
   log "Generating JWT signing key"
   JWT_KEY=$(openssl rand -hex 32)
   echo "CADDY_JWT_KEY=${JWT_KEY}" | sudo tee "$SECURITY_ENV" >/dev/null
-  sudo chmod 600 "$SECURITY_ENV"
+  sudo chown root:caddy "$SECURITY_ENV"
+  sudo chmod 640 "$SECURITY_ENV"
   log "JWT key saved to $SECURITY_ENV"
 else
   log "JWT key already exists: $SECURITY_ENV"
@@ -130,7 +131,7 @@ if [ ! -f "$USERS_FILE" ]; then
   sudo tee "$USERS_FILE" >/dev/null <<'EOF'
 {}
 EOF
-  sudo chown root:root "$USERS_FILE"
+  sudo chown root:caddy "$USERS_FILE"
   sudo chmod 640 "$USERS_FILE"
 fi
 
@@ -159,7 +160,6 @@ sudo tee "$MAIN_CADDYFILE" >/dev/null <<EOF
             enable identity store localdb
             cookie domain $BASE_DOMAIN
             cookie insecure off
-            registration disabled
             ui {
                 links {
                     "Sign Out" /logout
