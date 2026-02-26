@@ -19,37 +19,43 @@ if [ ! -f "$CONF_FILE" ]; then
   exit 1
 fi
 
-echo
-read -rp "Username: " USERNAME
-echo
-echo "Enter password for $USERNAME"
-echo
+########################################
+# Require caddy-security to be bootstrapped
+########################################
 
-HASH=$(caddy hash-password)
+if ! sudo grep -q 'authorization policy caddy-policy' /etc/caddy/Caddyfile 2>/dev/null; then
+  log "caddy-security is not configured."
+  log "Run: bootstrap-caddy-security <base-domain>"
+  exit 1
+fi
+
+if grep -q 'authorize with caddy-policy' "$CONF_FILE"; then
+  log "$DOMAIN is already protected with caddy-policy"
+  exit 0
+fi
 
 TMP_FILE=$(mktemp)
 
 ########################################
-# Remove existing basicauth block (if any), then inject fresh
+# Strip any existing basic_auth / basicauth block
 ########################################
 
-# Step 1: strip any existing basicauth block
 sudo awk '
-  /basicauth[[:space:]]*\{/ { skip=1; next }
-  skip && /\}/              { skip=0; next }
-  skip                      { next }
+  /basic_auth[[:space:]]*(\{|$)|basicauth[[:space:]]*(\{|$)/ { skip=1; next }
+  skip && /\}/ { skip=0; next }
+  skip         { next }
   { print }
 ' "$CONF_FILE" | cat -s | sudo tee "$TMP_FILE" >/dev/null
 
-# Step 2: inject new basicauth block after the opening brace
-sudo awk -v user="$USERNAME" -v hash="$HASH" '
+########################################
+# Inject authorize directive after site opening brace
+########################################
+
+sudo awk '
   /\{/ && !done {
     print
     print ""
-    print "    basicauth {"
-    print "        realm \"Protected Area\""
-    print "        " user " " hash
-    print "    }"
+    print "    authorize with caddy-policy"
     done=1
     next
   }
@@ -65,7 +71,7 @@ rm -f "$TMP_FILE"
 if sudo caddy validate --config /etc/caddy/Caddyfile 2>/dev/null; then
   log "Reloading Caddy"
   sudo systemctl reload caddy
-  log "Protection enabled for $DOMAIN"
+  log "Protection enabled for $DOMAIN (caddy-security portal auth)"
 else
   log "Caddy config validation failed — check $CONF_FILE"
   exit 1

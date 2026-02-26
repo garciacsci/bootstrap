@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() { echo "[bootstrap-caddy-security] $1"; }
+
+########################################
+# Args
+########################################
+
+BASE_DOMAIN="${1:-}"
+AUTH_SUBDOMAIN="${2:-auth}"
+
+if [[ -z "$BASE_DOMAIN" ]]; then
+  echo "Usage: bootstrap-caddy-security <base-domain> [auth-subdomain]"
+  echo "  Example: bootstrap-caddy-security example.com"
+  echo "           bootstrap-caddy-security example.com auth"
+  exit 1
+fi
+
+AUTH_DOMAIN="${AUTH_SUBDOMAIN}.${BASE_DOMAIN}"
+
+MAIN_CADDYFILE="/etc/caddy/Caddyfile"
+SITE_DIR="/etc/caddy/sites-enabled"
+SECURITY_ENV="/etc/caddy/caddy-security.env"
+USERS_FILE="/etc/caddy/users.json"
+SYSTEMD_OVERRIDE_DIR="/etc/systemd/system/caddy.service.d"
+
+########################################
+# OS check
+########################################
+
+OS_ID="$(. /etc/os-release && echo "$ID")"
+if [[ "$OS_ID" != "ubuntu" && "$OS_ID" != "debian" ]]; then
+  log "Unsupported OS: $OS_ID"
+  exit 1
+fi
+
+########################################
+# Install Go (required by xcaddy)
+########################################
+
+if ! command -v go >/dev/null 2>&1; then
+  log "Installing Go"
+  sudo apt update -y
+  sudo apt install -y golang-go
+else
+  log "Go already installed: $(go version)"
+fi
+
+########################################
+# Install xcaddy
+########################################
+
+if ! command -v xcaddy >/dev/null 2>&1; then
+  log "Installing xcaddy"
+
+  XCADDY_VERSION=$(curl -fsSL https://api.github.com/repos/caddyserver/xcaddy/releases/latest \
+    | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+
+  ARCH=$(uname -m)
+  case "$ARCH" in
+    x86_64)         XCADDY_ARCH="amd64" ;;
+    aarch64|arm64)  XCADDY_ARCH="arm64" ;;
+    *)              log "Unsupported arch: $ARCH"; exit 1 ;;
+  esac
+
+  curl -fsSL \
+    "https://github.com/caddyserver/xcaddy/releases/download/v${XCADDY_VERSION}/xcaddy_${XCADDY_VERSION}_linux_${XCADDY_ARCH}.tar.gz" \
+    | sudo tar -xz -C /usr/local/bin xcaddy
+
+  sudo chmod +x /usr/local/bin/xcaddy
+  log "xcaddy installed: $(xcaddy version)"
+else
+  log "xcaddy already installed: $(xcaddy version)"
+fi
+
+########################################
+# Build Caddy with caddy-security
+########################################
+
+log "Building Caddy with caddy-security plugin (this may take a few minutes)"
+
+CADDY_BUILD_DIR=$(mktemp -d)
+xcaddy build \
+  --with github.com/greenpau/caddy-security \
+  --output "$CADDY_BUILD_DIR/caddy"
+
+log "Replacing system Caddy binary"
+sudo systemctl stop caddy 2>/dev/null || true
+sudo cp "$CADDY_BUILD_DIR/caddy" /usr/bin/caddy
+sudo setcap cap_net_bind_service=+ep /usr/bin/caddy
+rm -rf "$CADDY_BUILD_DIR"
+
+log "Caddy version: $(caddy version)"
+
+########################################
+# JWT signing key
+########################################
+
+if [ ! -f "$SECURITY_ENV" ]; then
+  log "Generating JWT signing key"
+  JWT_KEY=$(openssl rand -hex 32)
+  echo "CADDY_JWT_KEY=${JWT_KEY}" | sudo tee "$SECURITY_ENV" >/dev/null
+  sudo chmod 600 "$SECURITY_ENV"
+  log "JWT key saved to $SECURITY_ENV"
+else
+  log "JWT key already exists: $SECURITY_ENV"
+fi
+
+########################################
+# Systemd environment drop-in
+########################################
+
+sudo mkdir -p "$SYSTEMD_OVERRIDE_DIR"
+
+sudo tee "$SYSTEMD_OVERRIDE_DIR/caddy-security.conf" >/dev/null <<EOF
+[Service]
+EnvironmentFile=$SECURITY_ENV
+EOF
+
+sudo systemctl daemon-reload
+log "Systemd override created"
+
+########################################
+# Users store
+########################################
+
+if [ ! -f "$USERS_FILE" ]; then
+  log "Creating users store at $USERS_FILE"
+  sudo tee "$USERS_FILE" >/dev/null <<'EOF'
+{}
+EOF
+  sudo chown root:root "$USERS_FILE"
+  sudo chmod 640 "$USERS_FILE"
+fi
+
+########################################
+# Update main Caddyfile
+########################################
+
+log "Writing main Caddyfile with caddy-security global config"
+
+sudo tee "$MAIN_CADDYFILE" >/dev/null <<EOF
+{
+    email you@example.com
+
+    order authenticate before respond
+    order authorize before basicauth
+
+    security {
+        local identity store localdb {
+            realm local
+            path $USERS_FILE
+        }
+
+        authentication portal caddy-portal {
+            crypto default token lifetime 86400
+            crypto key sign-verify {env.CADDY_JWT_KEY}
+            enable identity store localdb
+            cookie domain $BASE_DOMAIN
+            cookie insecure off
+            registration disabled
+            ui {
+                links {
+                    "Sign Out" /logout
+                }
+            }
+            transform user {
+                match realm local
+                action add role authp/user
+            }
+        }
+
+        authorization policy caddy-policy {
+            set auth url https://$AUTH_DOMAIN/
+            allow roles authp/user authp/admin
+        }
+    }
+}
+
+import $SITE_DIR/*
+EOF
+
+########################################
+# Auth portal site config
+########################################
+
+sudo mkdir -p "$SITE_DIR"
+AUTH_CONF="$SITE_DIR/$AUTH_DOMAIN.conf"
+
+if [ ! -f "$AUTH_CONF" ]; then
+  log "Creating auth portal site: $AUTH_DOMAIN"
+
+  sudo tee "$AUTH_CONF" >/dev/null <<EOF
+$AUTH_DOMAIN {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+
+    # Block self-service registration — users are added via add-portal-user
+    route /register* {
+        respond "Registration is disabled" 403
+    }
+
+    authenticate with caddy-portal
+}
+EOF
+
+else
+  log "Auth portal config already exists: $AUTH_CONF"
+fi
+
+########################################
+# Validate + restart
+########################################
+
+if sudo caddy validate --config "$MAIN_CADDYFILE" 2>/dev/null; then
+  log "Caddyfile valid"
+  sudo systemctl restart caddy
+  log "Caddy restarted"
+else
+  log "Caddyfile validation failed:"
+  sudo caddy validate --config "$MAIN_CADDYFILE" 2>&1 | sed 's/^/  /'
+  exit 1
+fi
+
+########################################
+# Done
+########################################
+
+echo
+echo "════════════════════════════════════════════"
+echo "  caddy-security setup complete"
+echo "════════════════════════════════════════════"
+echo
+echo "  Auth portal:  https://$AUTH_DOMAIN/"
+echo "  Users file:   $USERS_FILE"
+echo "  JWT key:      $SECURITY_ENV"
+echo
+echo "  Next steps:"
+echo
+echo "  1. Create your admin user:"
+echo "     add-portal-user"
+echo
+echo "  2. To protect a site:"
+echo "     bind-domain-protected <domain> <port>"
+echo
+echo "  3. To protect an existing site:"
+echo "     protect-domain <domain>"
+echo
+echo "════════════════════════════════════════════"

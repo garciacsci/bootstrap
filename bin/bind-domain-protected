@@ -31,9 +31,12 @@ if [ -f "$CONF" ]; then
   exit 0
 fi
 
-read -rp "Username: " USERNAME
-echo
-HASH=$(caddy hash-password)
+if ! sudo grep -q 'authorize with caddy-policy' /etc/caddy/Caddyfile 2>/dev/null \
+   && ! sudo grep -rq 'authorize with caddy-policy' "$SITE_DIR" 2>/dev/null; then
+  log "Warning: caddy-security does not appear to be configured."
+  log "Run bootstrap-caddy-security <base-domain> first."
+  exit 1
+fi
 
 sudo tee "$CONF" >/dev/null <<EOF
 $DOMAIN {
@@ -44,13 +47,14 @@ $DOMAIN {
         -Server
     }
 
-    basic_auth {
-        $USERNAME $HASH
-    }
+    authorize with caddy-policy
 
     reverse_proxy 127.0.0.1:$PORT
 }
 EOF
 
-sudo systemctl reload caddy
-log "Protected route created"
+sudo caddy validate --config /etc/caddy/Caddyfile 2>/dev/null \
+  && sudo systemctl reload caddy \
+  || { log "Caddy config invalid — check $CONF"; exit 1; }
+
+log "Protected route created (caddy-security portal auth)"

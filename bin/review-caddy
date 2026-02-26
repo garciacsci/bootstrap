@@ -29,7 +29,23 @@ else
 fi
 
 ########################################
-# 2. Main Caddyfile
+# 2. caddy-security portal
+########################################
+
+echo
+echo "── Auth Portal ──"
+if sudo grep -q 'authorization policy caddy-policy' "$MAIN" 2>/dev/null; then
+  PORTAL_DOMAIN=$(grep -r 'authenticate with caddy-portal' "$SITE_DIR"/ 2>/dev/null \
+    | head -1 | awk -F'/' '{print $(NF)}' | sed 's/\.conf//')
+  echo -e "${GRN}✔  caddy-security portal active${RST}"
+  [ -n "$PORTAL_DOMAIN" ] && echo -e "   ${DIM}https://$PORTAL_DOMAIN/${RST}"
+else
+  echo -e "${DIM}   not configured (run bootstrap-caddy-security)${RST}"
+fi
+
+########################################
+# 3. Main Caddyfile
+########################################
 ########################################
 
 echo
@@ -42,7 +58,7 @@ else
 fi
 
 ########################################
-# 3. Site configs
+# 4. Site configs
 ########################################
 
 echo
@@ -58,14 +74,21 @@ if [ -d "$SITE_DIR" ]; then
   else
     for conf in "${CONFS[@]}"; do
       DOMAIN=$(basename "$conf" .conf)
-      HAS_AUTH="public"
-      grep -qE "basicauth|basic_auth" "$conf" && HAS_AUTH="locked"
+
+      AUTH_METHOD="public"
+      if grep -qE "authorize with caddy-policy" "$conf" 2>/dev/null; then
+        AUTH_METHOD="portal"
+      elif grep -qE "basicauth|basic_auth" "$conf" 2>/dev/null; then
+        AUTH_METHOD="basic"
+      fi
 
       PORT=$(grep 'reverse_proxy' "$conf" 2>/dev/null | sed -n 's/.*127\.0\.0\.1:\([0-9]*\).*/\1/p' | head -1)
       PORT="${PORT:-?}"
 
-      if [ "$HAS_AUTH" = "locked" ]; then
-        echo -e "   ${CYN}$DOMAIN${RST}  →  :${PORT}  ${YEL}🔒 basicauth${RST}"
+      if [ "$AUTH_METHOD" = "portal" ]; then
+        echo -e "   ${CYN}$DOMAIN${RST}  →  :${PORT}  ${YEL}🔐 portal auth${RST}"
+      elif [ "$AUTH_METHOD" = "basic" ]; then
+        echo -e "   ${CYN}$DOMAIN${RST}  →  :${PORT}  ${YEL}🔒 basic auth${RST}"
       else
         echo -e "   ${CYN}$DOMAIN${RST}  →  :${PORT}  ${GRN}🌐 public${RST}"
       fi
@@ -76,7 +99,7 @@ else
 fi
 
 ########################################
-# 4. Duplicate domain check
+# 5. Duplicate domain check
 ########################################
 
 echo
@@ -97,7 +120,7 @@ else
 fi
 
 ########################################
-# 5. Config validation
+# 6. Config validation
 ########################################
 
 echo
@@ -111,7 +134,7 @@ else
 fi
 
 ########################################
-# 6. Show full site configs (verbose)
+# 7. Show full site configs (verbose)
 ########################################
 
 if [[ "${1:-}" == "-v" ]] && [ -d "$SITE_DIR" ]; then
