@@ -29,7 +29,7 @@ AUTH_DOMAIN="${AUTH_SUBDOMAIN}.${BASE_DOMAIN}"
 MAIN_CADDYFILE="/etc/caddy/Caddyfile"
 SITE_DIR="/etc/caddy/sites-enabled"
 SECURITY_ENV="/etc/caddy/caddy-security.env"
-USERS_FILE="/etc/caddy/users.json"
+USERS_FILE="/var/libcaddy/users.json"
 SYSTEMD_OVERRIDE_DIR="/etc/systemd/system/caddy.service.d"
 
 ########################################
@@ -132,6 +132,8 @@ log "Systemd override created"
 ########################################
 # Users store
 ########################################
+
+sudo mkdir -p /var/lib/caddy
 
 if [ ! -f "$USERS_FILE" ]; then
   log "Creating users store at $USERS_FILE"

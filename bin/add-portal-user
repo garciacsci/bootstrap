@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-USERS_FILE="/etc/caddy/users.json"
+USERS_FILE="/var/lib/caddy/users.json"
 
 log()  { echo "[add-portal-user] $1"; }
 fail() { echo "[add-portal-user] Error: $1" >&2; exit 1; }
