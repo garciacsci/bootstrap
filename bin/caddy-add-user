@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""
+Helper script to add users to caddy-security v1.1.x database.
+Writes the proper structured format with users array.
+"""
+
+import json
+import sys
+import uuid
+from datetime import datetime, timezone
+
+
+def load_db(path):
+    """Load existing database or create new v1.1.x structure."""
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+            # Check if it's already v1.1.x format
+            if isinstance(data, dict) and "users" in data:
+                return data
+            # Old format, migrate to new
+            elif isinstance(data, dict):
+                return {"revision": 1, "users": [], "policy": {}, "organizations": []}
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    # Create fresh v1.1.x structure
+    return {"revision": 1, "users": [], "policy": {}, "organizations": []}
+
+
+def user_exists(db, username):
+    """Check if user already exists."""
+    for user in db.get("users", []):
+        if user.get("username") == username:
+            return True
+    return False
+
+
+def add_user(db, username, email, password_hash, roles):
+    """Add a new user to the database."""
+    user_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    role_list = [{"name": role.strip()} for role in roles.split(",")]
+
+    new_user = {
+        "id": user_id,
+        "username": username,
+        "email": email,
+        "email_verified": True,
+        "passwords": [
+            {
+                "purpose": "generic",
+                "type": "local",
+                "hash_type": "bcrypt",
+                "hash": password_hash,
+                "expired_at": "0001-01-01T00:00:00Z",
+                "created_at": now,
+                "disabled": False,
+            }
+        ],
+        "roles": role_list,
+    }
+
+    db["users"].append(new_user)
+    db["revision"] = db.get("revision", 0) + 1
+    return db
+
+
+def main():
+    if len(sys.argv) != 6:
+        print(
+            "Usage: caddy-add-user <db-path> <username> <email> <password-hash> <roles>",
+            file=sys.stderr,
+        )
+        print(
+            "Example: caddy-add-user /var/lib/caddy/users.json junior me@example.com $2a$14$... 'authp/user,authp/admin'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    db_path = sys.argv[1]
+    username = sys.argv[2]
+    email = sys.argv[3]
+    password_hash = sys.argv[4]
+    roles = sys.argv[5]
+
+    db = load_db(db_path)
+
+    if user_exists(db, username):
+        print(f"Error: user '{username}' already exists", file=sys.stderr)
+        sys.exit(1)
+
+    db = add_user(db, username, email, password_hash, roles)
+
+    with open(db_path, "w") as f:
+        json.dump(db, f, indent=2)
+
+    print(f"User '{username}' added successfully")
+
+
+if __name__ == "__main__":
+    main()

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 USERS_FILE="/var/lib/caddy/users.json"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HELPER="$SCRIPT_DIR/caddy-security-user"
 
 log()  { echo "[add-portal-user] $1"; }
 fail() { echo "[add-portal-user] Error: $1" >&2; exit 1; }
@@ -10,9 +12,9 @@ fail() { echo "[add-portal-user] Error: $1" >&2; exit 1; }
 # Pre-flight
 ########################################
 
-[ -f "$USERS_FILE" ] || fail "Users file not found: $USERS_FILE — run bootstrap-caddy-security first"
-
 command -v caddy >/dev/null 2>&1 || fail "caddy not found"
+command -v python3 >/dev/null 2>&1 || fail "python3 not found"
+[ -x "$HELPER" ] || fail "Helper script not found or not executable: $HELPER"
 
 ########################################
 # Gather inputs
@@ -46,25 +48,29 @@ log "Stopping Caddy"
 sudo systemctl stop caddy
 
 ########################################
-# Add user via caddy-security CLI
+# Add user via helper script
 ########################################
 
 log "Adding user '$USERNAME'"
 
-# Create password file for caddy-security
+# Create password file for helper
 TEMP_PASS=$(mktemp)
 echo "$PASSWORD" > "$TEMP_PASS"
 
-# Use caddy-security's user add command
-sudo caddy-security add user \
+# Use our helper script that writes v1.1.x format
+sudo python3 "$HELPER" add \
   --db "$USERS_FILE" \
   --username "$USERNAME" \
   --email "$EMAIL" \
   --password "file:$TEMP_PASS" \
   --roles "$ROLES" \
-  || fail "Failed to add user — check caddy-security CLI is available"
+  || fail "Failed to add user"
 
 rm -f "$TEMP_PASS"
+
+# Set proper permissions
+sudo chown caddy:caddy "$USERS_FILE"
+sudo chmod 600 "$USERS_FILE"
 
 ########################################
 # Restart Caddy

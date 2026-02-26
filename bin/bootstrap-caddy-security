@@ -258,24 +258,33 @@ if [[ -z "$ADMIN_USERNAME" || -z "$ADMIN_EMAIL_INPUT" || -z "$ADMIN_PASSWORD" ]]
   exit 1
 fi
 
-# Stop Caddy to add first user (prevents DB conflicts)
+# Ensure Caddy is stopped while we create the initial database
 sudo systemctl stop caddy 2>/dev/null || true
-
-# Create password file for caddy-security
-TEMP_PASS=$(mktemp)
-echo "$ADMIN_PASSWORD" > "$TEMP_PASS"
 
 log "Adding admin user '$ADMIN_USERNAME'"
 
-# Add first admin user via CLI
-sudo caddy-security add user \
+# Create password file for helper
+TEMP_PASS=$(mktemp)
+echo "$ADMIN_PASSWORD" > "$TEMP_PASS"
+
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HELPER="$SCRIPT_DIR/caddy-security-user"
+
+# Use our helper script that writes v1.1.x format
+sudo python3 "$HELPER" add \
   --db "$USERS_FILE" \
   --username "$ADMIN_USERNAME" \
   --email "$ADMIN_EMAIL_INPUT" \
   --password "file:$TEMP_PASS" \
-  --roles "authp/admin,authp/user"
+  --roles "authp/admin,authp/user" \
+  || { log "Failed to add admin user"; exit 1; }
 
 rm -f "$TEMP_PASS"
+
+# Set proper permissions
+sudo chown caddy:caddy "$USERS_FILE"
+sudo chmod 600 "$USERS_FILE"
 
 # Start Caddy with the user database already populated
 sudo systemctl start caddy

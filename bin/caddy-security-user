@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""
+Helper to manage caddy-security v1.1.x users.json database.
+Writes the correct structured format with users array, revision, etc.
+"""
+import json
+import sys
+import os
+import uuid
+from datetime import datetime, timezone
+import subprocess
+
+
+def log(msg):
+    print(f"[caddy-security-user] {msg}", file=sys.stderr)
+
+
+def fail(msg):
+    print(f"[caddy-security-user] Error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def hash_password(plaintext):
+    """Use caddy's built-in bcrypt hasher."""
+    try:
+        result = subprocess.run(
+            ["caddy", "hash-password", "--plaintext", plaintext],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        fail(f"Failed to hash password: {e.stderr}")
+    except FileNotFoundError:
+        fail("caddy command not found")
+
+
+def load_db(path):
+    """Load existing database or return empty v1.1.x structure."""
+    if not os.path.exists(path):
+        return {"revision": 1, "users": []}
+
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+
+        # If it's the old flat-map format, convert to v1.1.x
+        if "users" not in data and "revision" not in data:
+            log("Converting old flat-map format to v1.1.x structure")
+            users = []
+            for username, user_data in data.items():
+                if isinstance(user_data, dict):
+                    users.append(user_data)
+            return {"revision": 1, "users": users}
+
+        # Ensure revision exists
+        if "revision" not in data:
+            data["revision"] = 1
+
+        # Ensure users array exists
+        if "users" not in data:
+            data["users"] = []
+
+        return data
+
+    except json.JSONDecodeError:
+        log(f"Database corrupted, starting fresh")
+        return {"revision": 1, "users": []}
+
+
+def find_user(db, username):
+    """Find user by username in the users array."""
+    for user in db.get("users", []):
+        if user.get("username") == username:
+            return user
+    return None
+
+
+def add_user(db, username, email, password_hash, roles):
+    """Add a new user to the database."""
+    if find_user(db, username):
+        fail(f"User '{username}' already exists")
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    user_id = str(uuid.uuid4())
+
+    # Convert role string to role objects
+    role_list = []
+    for role in roles.split(","):
+        role = role.strip()
+        if role:
+            role_list.append({"name": role})
+
+    user = {
+        "id": user_id,
+        "username": username,
+        "email": email,
+        "email_verified": True,
+        "passwords": [
+            {
+                "purpose": "generic",
+                "type": "local",
+                "hash_type": "bcrypt",
+                "hash": password_hash,
+                "expired_at": "0001-01-01T00:00:00Z",
+                "created_at": now,
+                "disabled": False,
+            }
+        ],
+        "roles": role_list,
+    }
+
+    db["users"].append(user)
+    db["revision"] = db.get("revision", 0) + 1
+
+    return db
+
+
+def delete_user(db, username):
+    """Remove a user from the database."""
+    user = find_user(db, username)
+    if not user:
+        fail(f"User '{username}' not found")
+
+    db["users"] = [u for u in db["users"] if u.get("username") != username]
+    db["revision"] = db.get("revision", 0) + 1
+
+    return db
+
+
+def list_users(db):
+    """List all users in the database."""
+    for user in db.get("users", []):
+        username = user.get("username", "unknown")
+        email = user.get("email", "")
+        roles = ", ".join(r.get("name", "") for r in user.get("roles", []))
+        print(f"{username:20} {email:30} {roles}")
+
+
+def save_db(path, db):
+    """Save database to file."""
+    # Write to temp file first, then atomic move
+    temp_path = f"{path}.tmp"
+    with open(temp_path, "w") as f:
+        json.dump(db, f, indent=2)
+    os.replace(temp_path, path)
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(
+            """
+Usage:
+  caddy-security-user add --db FILE --username USER --email EMAIL --password PASS --roles ROLES
+  caddy-security-user delete --db FILE --username USER
+  caddy-security-user list --db FILE
+        """.strip()
+        )
+        sys.exit(1)
+
+    command = sys.argv[1]
+
+    # Parse arguments
+    args = {}
+    i = 2
+    while i < len(sys.argv):
+        if sys.argv[i].startswith("--"):
+            key = sys.argv[i][2:]
+            if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("--"):
+                args[key] = sys.argv[i + 1]
+                i += 2
+            else:
+                args[key] = True
+                i += 1
+        else:
+            i += 1
+
+    db_path = args.get("db")
+    if not db_path:
+        fail("--db is required")
+
+    db = load_db(db_path)
+
+    if command == "add":
+        username = args.get("username")
+        email = args.get("email")
+        password = args.get("password")
+        roles = args.get("roles", "authp/user")
+
+        if not username or not email or not password:
+            fail("add requires --username, --email, and --password")
+
+        # Handle password file
+        if password.startswith("file:"):
+            password_file = password[5:]
+            try:
+                with open(password_file, "r") as f:
+                    password = f.read().strip()
+            except FileNotFoundError:
+                fail(f"Password file not found: {password_file}")
+
+        password_hash = hash_password(password)
+        db = add_user(db, username, email, password_hash, roles)
+        save_db(db_path, db)
+        log(f"User '{username}' added successfully")
+
+    elif command == "delete":
+        username = args.get("username")
+        if not username:
+            fail("delete requires --username")
+
+        db = delete_user(db, username)
+        save_db(db_path, db)
+        log(f"User '{username}' deleted successfully")
+
+    elif command == "list":
+        list_users(db)
+
+    else:
+        fail(f"Unknown command: {command}")
+
+
+if __name__ == "__main__":
+    main()
