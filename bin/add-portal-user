@@ -2,13 +2,23 @@
 set -euo pipefail
 
 USERS_FILE="/var/lib/caddy/users.json"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HELPER="$SCRIPT_DIR/caddy-security-user"
 
 log()  { echo "[add-portal-user] $1"; }
 fail() { echo "[add-portal-user] Error: $1" >&2; exit 1; }
 
-[ -f "$USERS_FILE" ] || fail "Users file not found: $USERS_FILE — run bootstrap-caddy-security first"
+########################################
+# Pre-flight
+########################################
+
 command -v caddy >/dev/null 2>&1 || fail "caddy not found"
 command -v python3 >/dev/null 2>&1 || fail "python3 not found"
+[ -x "$HELPER" ] || fail "Helper script not found or not executable: $HELPER"
+
+########################################
+# Gather inputs
+########################################
 
 echo
 read -rp  "Username: " USERNAME
@@ -27,71 +37,47 @@ echo
 
 echo
 read -rp "Grant admin role? [y/N] " ADMIN_CHOICE
-IS_ADMIN="false"
-[[ "$ADMIN_CHOICE" =~ ^[Yy]$ ]] && IS_ADMIN="true"
+ROLES="authp/user"
+[[ "$ADMIN_CHOICE" =~ ^[Yy]$ ]] && ROLES="admin,authp/admin,authp/user"
 
-HASH=$(caddy hash-password --plaintext "$PASSWORD")
-USER_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c "import uuid; print(uuid.uuid4())")
-NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+########################################
+# Stop Caddy (prevents DB conflicts)
+########################################
 
-TMPFILE=$(mktemp)
+log "Stopping Caddy"
+sudo systemctl stop caddy
 
-python3 - "$USERS_FILE" "$TMPFILE" \
-  "$USERNAME" "$EMAIL" "$HASH" "$USER_ID" "$NOW" "$IS_ADMIN" <<'PY'
-import json, sys
+########################################
+# Add user via helper script
+########################################
 
-_, users_file, out_file, username, email, hash_val, user_id, now, is_admin = sys.argv
-is_admin = is_admin.lower() == "true"
-domain = email.split("@", 1)[1] if "@" in email else ""
+log "Adding user '$USERNAME'"
 
-with open(users_file) as f:
-    d = json.load(f)
+# Create password file for helper
+TEMP_PASS=$(mktemp)
+echo "$PASSWORD" > "$TEMP_PASS"
 
-users = d.get("users")
-if not isinstance(users, list):
-    raise SystemExit("users.json schema mismatch: missing users[]")
+# Use our helper script that writes v1.1.x format
+sudo python3 "$HELPER" add \
+  --db "$USERS_FILE" \
+  --username "$USERNAME" \
+  --email "$EMAIL" \
+  --password "file:$TEMP_PASS" \
+  --roles "$ROLES" \
+  || fail "Failed to add user"
 
-if any(u.get("username") == username for u in users):
-    raise SystemExit(f"user '{username}' already exists")
+rm -f "$TEMP_PASS"
 
-roles = [{"name": "user", "organization": "authp"}]
-if is_admin:
-    roles.append({"name": "admin", "organization": "authp"})
-
-users.append({
-    "id": user_id,
-    "username": username,
-    "email_address": {"address": email, "domain": domain},
-    "email_addresses": [{"address": email, "domain": domain}],
-    "passwords": [{
-        "purpose": "generic",
-        "algorithm": "bcrypt",
-        "hash": hash_val,
-        "cost": 10,
-        "expired_at": "0001-01-01T00:00:00Z",
-        "created_at": now,
-        "disabled_at": "0001-01-01T00:00:00Z"
-    }],
-    "created": now,
-    "last_modified": now,
-    "roles": roles
-})
-
-d["revision"] = int(d.get("revision", 1)) + 1
-d["last_modified"] = now
-
-with open(out_file, "w") as f:
-    json.dump(d, f, indent=2)
-PY
-
-sudo cp "$TMPFILE" "$USERS_FILE"
+# Set proper permissions
 sudo chown caddy:caddy "$USERS_FILE"
 sudo chmod 600 "$USERS_FILE"
-rm -f "$TMPFILE"
 
-log "Reloading Caddy"
-sudo systemctl reload caddy
+########################################
+# Restart Caddy
+########################################
 
-ROLE="authp/user"
-[[ "$IS_ADMIN" == "true" ]] && ROLE="authp/admin"
-log "User '$USERNAME' created with role '$ROLE'"
+log "Starting Caddy"
+sudo systemctl start caddy
+
+echo
+log "User '$USERNAME' created with roles '$ROLES'"

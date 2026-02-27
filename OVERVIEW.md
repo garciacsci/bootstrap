@@ -130,11 +130,13 @@ browser → app.trilbysir.com
 
 **Key files:**
 
-- `/etc/caddy/Caddyfile` — defines `security {}` block with identity store, portal, and policy. Rewritten by `bootstrap-caddy-security`.
+- `/etc/caddy/Caddyfile` — defines `security {}` block with identity store, portal, and policy. Rewritten by `bootstrap-caddy-security`. Includes `crypto key verify` in the authorization policy to validate JWT tokens.
 - `/etc/caddy/caddy-security.env` — contains `CADDY_JWT_KEY=<hex>`. Permissions: `root:caddy 640`. Read by systemd before caddy starts.
-- `/var/lib/caddy/users.json` — live user database managed by caddy-security. Permissions: `caddy:caddy 600`. Must be writable by the caddy process. **Never edit manually** — use `caddy-security` CLI via `add-portal-user`.
+- `/var/lib/caddy/users.json` — live user database managed by caddy-security. Permissions: `caddy:caddy 600`. Must be writable by the caddy process. **Never edit manually** — use `caddy-security-user` helper via `add-portal-user`.
 
-**Registration is disabled.** `/register*` routes return 403 at the Caddy level. New users are added exclusively via `add-portal-user` (which uses the `caddy-security` CLI).
+**Registration is disabled.** `/register*` routes return 403 at the Caddy level. New users are added exclusively via `add-portal-user` (which uses the `caddy-security-user` helper).
+
+**Admin users:** To prevent auto-creation of `webadmin`, admin users must have the `admin` role in addition to `authp/admin` and `authp/user`. The scripts handle this automatically.
 
 ---
 

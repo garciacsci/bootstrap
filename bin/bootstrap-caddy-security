@@ -182,6 +182,7 @@ sudo tee "$MAIN_CADDYFILE" >/dev/null <<EOF
 
         authorization policy caddy-policy {
             set auth url https://$AUTH_DOMAIN/
+            crypto key verify {env.CADDY_JWT_KEY}
             allow roles authp/user authp/admin
         }
     }
@@ -277,7 +278,7 @@ sudo python3 "$HELPER" add \
   --username "$ADMIN_USERNAME" \
   --email "$ADMIN_EMAIL_INPUT" \
   --password "file:$TEMP_PASS" \
-  --roles "authp/admin,authp/user" \
+  --roles "admin,authp/admin,authp/user" \
   || { log "Failed to add admin user"; exit 1; }
 
 rm -f "$TEMP_PASS"
